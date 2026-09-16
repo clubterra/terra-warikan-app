@@ -79,6 +79,7 @@ export function convertBottleAmount(amount, isMenuPrice, multiplier) {
  * @param {Array<{id:string, amount:number, isMenuPrice:boolean, multiplier:number, payerIds:string[]}>} input.bottles
  * @param {Array<{personId:string, amount:number}>} input.topups 割り勘分への上乗せ額
  * @param {Object<string,'join'|'onlyBottle'>} input.bottleParticipation ボトル負担者ごとの残り割り勘参加意思
+ * @param {Object<string,'join'|'onlyTopup'>} [input.topupParticipation] 上乗せする人ごとの残り割り勘参加意思（省略時は'join'扱い）
  * @param {string[]} [input.extraRecipients] 均等割りの端数(+100円)を受け取る人のID（省略時は先頭から自動割当）
  */
 export function compute(input) {
@@ -89,6 +90,7 @@ export function compute(input) {
     bottles = [],
     topups = [],
     bottleParticipation = {},
+    topupParticipation = {},
     extraRecipients = null,
   } = input;
 
@@ -189,14 +191,22 @@ export function compute(input) {
     topupSum += t.amount;
   }
 
+  // 上乗せする人ごとに、残りの割り勘に入るか（未指定は'join'扱い、後方互換のため）
+  const topupOnlySet = new Set();
+  for (const personId of topupMap.keys()) {
+    if (topupParticipation[personId] === "onlyTopup") topupOnlySet.add(personId);
+  }
+
   if (bottleTruncatedSum + topupSum > pool) {
     return { ok: false, message: "ボトル代や上乗せ額の合計が残りの会計を超えています。金額を確認してください。" };
   }
 
   const residual = pool - bottleTruncatedSum - topupSum;
 
-  // 割り勘の残額に参加する人 = 固定額の人・「ボトル代だけ払う」人 以外の全員
-  const participants = people.filter((p) => !fixedMap.has(p.id) && !bottleOnlySet.has(p.id));
+  // 割り勘の残額に参加する人 = 固定額の人・「ボトル代だけ払う」人・「上乗せ額だけ払う」人 以外の全員
+  const participants = people.filter(
+    (p) => !fixedMap.has(p.id) && !bottleOnlySet.has(p.id) && !topupOnlySet.has(p.id)
+  );
 
   if (residual > 0 && participants.length === 0) {
     return { ok: false, message: "残りを払う人を選んでください。" };
@@ -234,13 +244,11 @@ export function compute(input) {
     if (fixedMap.has(p.id)) {
       breakdown.fixed = fixedMap.get(p.id);
       amount = breakdown.fixed;
-    } else if (bottleOnlySet.has(p.id)) {
-      breakdown.bottleTruncated = bottleTruncatedMap.get(p.id) || 0;
-      breakdown.bottleExactBeforeCut = personBottleExact.get(p.id) || 0;
-      amount = breakdown.bottleTruncated;
     } else {
-      breakdown.evenBase = baseAmount;
-      breakdown.extra = extraSet.has(p.id) ? UNIT : 0;
+      // 「ボトル代だけ払う」「上乗せ額だけ払う」を選んだ人は、残りの均等割りには入らない。
+      const isParticipant = !bottleOnlySet.has(p.id) && !topupOnlySet.has(p.id);
+      breakdown.evenBase = isParticipant ? baseAmount : 0;
+      breakdown.extra = isParticipant && extraSet.has(p.id) ? UNIT : 0;
       breakdown.topup = topupMap.get(p.id) || 0;
       breakdown.bottleTruncated = bottleTruncatedMap.get(p.id) || 0;
       breakdown.bottleExactBeforeCut = personBottleExact.get(p.id) || 0;

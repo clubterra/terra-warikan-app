@@ -211,6 +211,37 @@ test("負の金額・未入力は無効", () => {
   assert.equal(r.ok, false);
 });
 
+test("上乗せする人が「残りの割り勘に入らない」を選ぶと、上乗せ額だけの支払いになる", () => {
+  const ppl = people(4);
+  const topups = [{ personId: "p1", amount: 5000 }];
+  const r = compute({
+    total: 100000,
+    people: ppl,
+    topups,
+    topupParticipation: { p1: "onlyTopup" },
+  });
+  assert.equal(r.ok, true);
+  const amounts = amountsById(r);
+  assert.equal(amounts.p1, 5000);
+  const others = [amounts.p2, amounts.p3, amounts.p4];
+  // 残額 95,000 を3人で均等割り（100円単位）
+  assert.ok(others.every((a) => a === 31700 || a === 31600));
+  assert.equal(r.sumTotal, 100000);
+});
+
+test("topupParticipation を省略しても既定は「入る」で従来どおり計算される", () => {
+  const ppl = people(4);
+  const topups = [{ personId: "p1", amount: 10000 }];
+  const withDefault = compute({ total: 100000, people: ppl, topups });
+  const withExplicitJoin = compute({
+    total: 100000,
+    people: ppl,
+    topups,
+    topupParticipation: { p1: "join" },
+  });
+  assert.deepEqual(amountsById(withDefault), amountsById(withExplicitJoin));
+});
+
 test("固定額の人にボトルを重複設定できない", () => {
   const ppl = people(3);
   const bottles = [{ id: "b1", amount: 3000, isMenuPrice: false, multiplier: 1, payerIds: ["p1"] }];
