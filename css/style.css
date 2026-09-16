@@ -180,6 +180,47 @@ button {
   margin-top: 2px;
 }
 
+.btn-choice.selected-choice {
+  border: 2px solid var(--accent);
+  background: rgba(202, 161, 75, 0.12);
+}
+
+.bottle-calc-preview {
+  background: var(--panel);
+  border-radius: var(--radius);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-align: center;
+}
+.bottle-calc-preview .calc-row {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.bottle-calc-preview .calc-label {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.bottle-calc-preview .calc-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+}
+.bottle-calc-preview .calc-row.highlight .calc-value {
+  font-size: 30px;
+  color: var(--accent);
+  font-weight: 800;
+}
+.bottle-calc-preview .calc-arrow {
+  font-size: 15px;
+  color: var(--text-dim);
+  padding: 2px 0;
+}
+
 .amount-display {
   font-size: 44px;
   font-weight: 800;
@@ -375,20 +416,6 @@ input.amount-display::placeholder {
 .bottle-total-banner .calc-line {
   font-size: 13px;
   color: var(--text-dim);
-}
-
-.toggle-row {
-  display: flex;
-  gap: 10px;
-}
-.toggle-row .btn {
-  flex: 1;
-  font-size: 17px;
-  min-height: 52px;
-}
-.toggle-row .btn.active {
-  background: var(--accent);
-  color: #201a08;
 }
 
 details.settings {

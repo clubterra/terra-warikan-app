@@ -424,7 +424,7 @@ function renderBottleAmount() {
   state.amountTarget = "bottleDraftAmount";
   return layout({
     title: "ボトルはいくら？",
-    subtitle: "メニューの金額でも、税・サービス料込みの金額でも、そのまま入力してください。",
+    subtitle: "メニュー価格でも、会計に含まれる金額でも、そのまま入力してください。",
     body: amountEntryBody(),
     footer: `<button class="btn btn-primary" data-action="bottle-amount-next" type="button">次へ</button>`,
   });
@@ -433,27 +433,42 @@ function renderBottleAmount() {
 function renderBottleType() {
   const d = state.answers.bottleDraft;
   const isMenu = d.isMenuPrice;
+  const exact = convertBottleAmount(d.amount, d.isMenuPrice, d.multiplier);
   return layout({
-    title: "メニューの金額？ 税・サービス料込み？",
+    title: "入力した金額の種類は？",
+    subtitle: "ボトル代として入力した金額が、どちらの金額かを選んでください。",
     body: `
-      <div class="toggle-row">
-        <button class="btn ${isMenu ? "active" : ""}" data-action="bottle-type-choice" data-value="menu" type="button">メニューの金額</button>
-        <button class="btn ${!isMenu ? "active" : ""}" data-action="bottle-type-choice" data-value="actual" type="button">税・サービス料込み</button>
-      </div>
+      <button class="btn btn-choice ${isMenu ? "selected-choice" : ""}" data-action="bottle-type-choice" data-value="menu" type="button">
+        ① メニュー価格<span class="desc">メニューに書いてある金額を入力<br/>入力額 × 倍率で計算します</span>
+      </button>
+      <button class="btn btn-choice ${!isMenu ? "selected-choice" : ""}" data-action="bottle-type-choice" data-value="actual" type="button">
+        ② 会計に含まれる金額<span class="desc">税・サービス料などを含めた最終金額を入力<br/>そのまま使用します（倍率はかけません）</span>
+      </button>
       ${
         isMenu
           ? `
+      <div class="bottle-calc-preview" id="bottle-calc-preview">
+        <div class="calc-row">
+          <div class="calc-label">メニュー価格</div>
+          <div class="calc-value">${fmt(d.amount)}円</div>
+        </div>
+        <div class="calc-arrow">↓ <span id="bottle-multiplier-display">${esc(d.multiplier)}</span>倍</div>
+        <div class="calc-row highlight">
+          <div class="calc-label">会計に含まれる金額</div>
+          <div class="calc-value" id="bottle-calc-result">${fmt(exact)}円</div>
+        </div>
+      </div>
       <details class="settings">
-        <summary>倍率を変更する（適用中：${esc(d.multiplier)}倍）</summary>
+        <summary>倍率を変更する（適用中：<span id="bottle-multiplier-summary">${esc(d.multiplier)}</span>倍）</summary>
         <div class="settings-body">
           <div class="multiplier-row">
-            <input type="text" inputmode="decimal" data-change="multiplier" value="${esc(d.multiplier)}" />
+            <input type="text" inputmode="decimal" data-bind="multiplier" value="${esc(d.multiplier)}" />
             <span class="hint">倍</span>
           </div>
-          <div class="hint">初期値は1.3倍です。税・サービス料の設定に合わせて変えられます。</div>
+          <div class="hint">初期値は1.3倍です。必要に応じて変えられます。</div>
         </div>
       </details>`
-          : `<div class="hint">この金額をそのまま使います。倍率はかけません。</div>`
+          : `<div class="hint">この金額（${fmt(exact)}円）をそのまま会計から差し引きます。倍率はかけません。</div>`
       }
     `,
     footer: `<button class="btn btn-primary" data-action="bottle-type-next" type="button">次へ</button>`,
@@ -469,7 +484,7 @@ function renderBottlePayers() {
   const exact = convertBottleAmount(d.amount, d.isMenuPrice, d.multiplier);
   const calcLine = d.isMenuPrice
     ? `${fmt(d.amount)}円 × ${esc(d.multiplier)}倍 = ${fmt(exact)}円`
-    : `税・サービス料込み ${fmt(exact)}円`;
+    : `会計に含まれる金額 ${fmt(exact)}円`;
   return layout({
     title: "誰が払う？",
     subtitle: "このボトルの代金を払う人を選んでください。複数人選べます。",
@@ -487,7 +502,7 @@ function renderBottlePayers() {
 
 function bottleSummaryText(b) {
   const exact = convertBottleAmount(b.amount, b.isMenuPrice, b.multiplier);
-  const typeText = b.isMenuPrice ? `メニュー価格 × ${b.multiplier}倍` : "税・サービス料込み";
+  const typeText = b.isMenuPrice ? `メニュー価格 × ${b.multiplier}倍` : "会計に含まれる金額";
   const names = b.payerIds.map(personName).join("、");
   return `
     <div class="item-card">
@@ -689,7 +704,7 @@ function method2FixedCard(f) {
 
 function method2BottleCard(b) {
   const exact = convertBottleAmount(b.amount, b.isMenuPrice, b.multiplier);
-  const typeText = b.isMenuPrice ? `メニュー価格 × ${b.multiplier}倍` : "税・サービス料込み";
+  const typeText = b.isMenuPrice ? `メニュー価格 × ${b.multiplier}倍` : "会計に含まれる金額";
   const payerLines = b.payerIds
     .map((pid) => `${esc(personName(pid))}（${esc(bottleParticipationLabel(pid))}）`)
     .join("、");
@@ -1433,13 +1448,26 @@ function handleRenameChange(input) {
   }
 }
 
-function handleMultiplierChange(input) {
-  const v = parseFloat(input.value);
-  if (state.answers.bottleDraft) {
-    state.answers.bottleDraft.multiplier = isPositiveNumber(v) ? v : 1.3;
+function handleMultiplierInput(input) {
+  const raw = input.value;
+  const v = parseFloat(raw);
+  const valid = isPositiveNumber(v);
+  const d = state.answers.bottleDraft;
+  if (!d) return;
+  if (valid) {
+    d.multiplier = v;
   }
-  // details/summary が閉じてしまわないよう、ここでは再描画しない。
-  // 次にこの画面を表示し直したときに反映される。
+  // details/summary が閉じてしまわないよう、ここでは再描画せず、
+  // プレビュー表示だけをその場で直接書き換える。
+  const displayText = valid ? String(v) : raw;
+  const previewMultiplier = valid ? v : d.multiplier;
+  const exact = convertBottleAmount(d.amount, true, previewMultiplier);
+  const displayEl = document.getElementById("bottle-multiplier-display");
+  if (displayEl) displayEl.textContent = displayText;
+  const summaryEl = document.getElementById("bottle-multiplier-summary");
+  if (summaryEl) summaryEl.textContent = displayText;
+  const resultEl = document.getElementById("bottle-calc-result");
+  if (resultEl) resultEl.textContent = `${fmt(exact)}円`;
 }
 
 function isPositiveNumber(v) {
@@ -1460,6 +1488,8 @@ app.addEventListener("input", (e) => {
   const t = e.target;
   if (t.dataset && t.dataset.bind === "amount") {
     handleAmountInput(t);
+  } else if (t.dataset && t.dataset.bind === "multiplier") {
+    handleMultiplierInput(t);
   }
 });
 
@@ -1467,8 +1497,6 @@ app.addEventListener("change", (e) => {
   const t = e.target;
   if (t.dataset && t.dataset.bind === "rename") {
     handleRenameChange(t);
-  } else if (t.dataset && t.dataset.change === "multiplier") {
-    handleMultiplierChange(t);
   }
 });
 
