@@ -424,37 +424,31 @@ function renderBottleAmount() {
   state.amountTarget = "bottleDraftAmount";
   return layout({
     title: "ボトルはいくら？",
-    subtitle: "メニュー価格でも、会計に含まれる金額でも、そのまま入力してください。",
+    subtitle: "メニューに書いてある金額を入力してください。自動で倍率をかけて計算します。",
     body: amountEntryBody(),
     footer: `<button class="btn btn-primary" data-action="bottle-amount-next" type="button">次へ</button>`,
   });
 }
 
-function renderBottleType() {
+function renderBottlePayers() {
   const d = state.answers.bottleDraft;
-  const isMenu = d.isMenuPrice;
-  const exact = convertBottleAmount(d.amount, d.isMenuPrice, d.multiplier);
+  const people = eligibleForBottlePayer();
+  const rows = people
+    .map((p) => personCheckRow(p, { type: "checkbox", checked: d.payerIds.includes(p.id) }))
+    .join("");
+  const exact = convertBottleAmount(d.amount, true, d.multiplier);
   return layout({
-    title: "入力した金額の種類は？",
-    subtitle: "ボトル代として入力した金額が、どちらの金額かを選んでください。",
+    title: "誰が払う？",
+    subtitle: "このボトルの代金を払う人を選んでください。複数人選べます。",
     body: `
-      <button class="btn btn-choice ${isMenu ? "selected-choice" : ""}" data-action="bottle-type-choice" data-value="menu" type="button">
-        ① メニュー価格<span class="desc">メニューに書いてある金額を入力<br/>入力額 × 倍率で計算します</span>
-      </button>
-      <button class="btn btn-choice ${!isMenu ? "selected-choice" : ""}" data-action="bottle-type-choice" data-value="actual" type="button">
-        ② 会計に含まれる金額<span class="desc">税・サービス料などを含めた最終金額を入力<br/>そのまま使用します（倍率はかけません）</span>
-      </button>
-      ${
-        isMenu
-          ? `
       <div class="bottle-calc-preview" id="bottle-calc-preview">
         <div class="calc-row">
-          <div class="calc-label">メニュー価格</div>
+          <div class="calc-label">ボトル代</div>
           <div class="calc-value">${fmt(d.amount)}円</div>
         </div>
-        <div class="calc-arrow">↓ <span id="bottle-multiplier-display">${esc(d.multiplier)}</span>倍</div>
+        <div class="calc-arrow">↓ ×<span id="bottle-multiplier-display">${esc(d.multiplier)}</span></div>
         <div class="calc-row highlight">
-          <div class="calc-label">会計に含まれる金額</div>
+          <div class="calc-label">計算後</div>
           <div class="calc-value" id="bottle-calc-result">${fmt(exact)}円</div>
         </div>
       </div>
@@ -467,33 +461,7 @@ function renderBottleType() {
           </div>
           <div class="hint">初期値は1.3倍です。必要に応じて変えられます。</div>
         </div>
-      </details>`
-          : `<div class="hint">この金額（${fmt(exact)}円）をそのまま会計から差し引きます。倍率はかけません。</div>`
-      }
-    `,
-    footer: `<button class="btn btn-primary" data-action="bottle-type-next" type="button">次へ</button>`,
-  });
-}
-
-function renderBottlePayers() {
-  const d = state.answers.bottleDraft;
-  const people = eligibleForBottlePayer();
-  const rows = people
-    .map((p) => personCheckRow(p, { type: "checkbox", checked: d.payerIds.includes(p.id) }))
-    .join("");
-  const exact = convertBottleAmount(d.amount, d.isMenuPrice, d.multiplier);
-  const calcLine = d.isMenuPrice
-    ? `${fmt(d.amount)}円 × ${esc(d.multiplier)}倍 = ${fmt(exact)}円`
-    : `会計に含まれる金額 ${fmt(exact)}円`;
-  return layout({
-    title: "誰が払う？",
-    subtitle: "このボトルの代金を払う人を選んでください。複数人選べます。",
-    body: `
-      <div class="bottle-total-banner">
-        <div class="label">ボトル分</div>
-        <div class="value">${fmt(exact)}円</div>
-        <div class="calc-line">${calcLine}</div>
-      </div>
+      </details>
       <div class="card-list">${rows}</div>
     `,
     footer: `<button class="btn btn-primary" data-action="bottle-payers-next" type="button">次へ</button>`,
@@ -501,13 +469,12 @@ function renderBottlePayers() {
 }
 
 function bottleSummaryText(b) {
-  const exact = convertBottleAmount(b.amount, b.isMenuPrice, b.multiplier);
-  const typeText = b.isMenuPrice ? `メニュー価格 × ${b.multiplier}倍` : "会計に含まれる金額";
+  const exact = convertBottleAmount(b.amount, true, b.multiplier);
   const names = b.payerIds.map(personName).join("、");
   return `
     <div class="item-card">
       <div class="info">
-        <b>${fmt(b.amount)}円</b>（${esc(typeText)} → ${fmt(exact)}円）<br/>
+        <b>${fmt(b.amount)}円</b> × ${esc(b.multiplier)}倍 → ${fmt(exact)}円<br/>
         負担する人：${esc(names)}
       </div>
       <button class="del" data-action="bottle-delete" data-id="${esc(b.id)}" type="button">削除</button>
@@ -703,15 +670,14 @@ function method2FixedCard(f) {
 }
 
 function method2BottleCard(b) {
-  const exact = convertBottleAmount(b.amount, b.isMenuPrice, b.multiplier);
-  const typeText = b.isMenuPrice ? `メニュー価格 × ${b.multiplier}倍` : "会計に含まれる金額";
+  const exact = convertBottleAmount(b.amount, true, b.multiplier);
   const payerLines = b.payerIds
     .map((pid) => `${esc(personName(pid))}（${esc(bottleParticipationLabel(pid))}）`)
     .join("、");
   return `
     <div class="item-card">
       <div class="info">
-        <b>ボトル分 ${fmt(exact)}円</b>（${esc(typeText)}）<br/>
+        <b>ボトル分 ${fmt(exact)}円</b>（${fmt(b.amount)}円 × ${esc(b.multiplier)}倍）<br/>
         負担する人：${payerLines}
       </div>
       <div class="card-actions">
@@ -874,7 +840,6 @@ const screens = {
   "q3-method": renderQ3Method,
   "core-bottle-ask": renderCoreBottleAsk,
   "bottle-amount": renderBottleAmount,
-  "bottle-type": renderBottleType,
   "bottle-payers": renderBottlePayers,
   "bottle-add-more": renderBottleAddMore,
   "bottle-participation": renderBottleParticipation,
@@ -1031,19 +996,9 @@ function handleAction(action, el) {
         render();
         return;
       }
-      goTo("bottle-type");
-      return;
-    }
-
-    case "bottle-type-choice": {
-      a.bottleDraft.isMenuPrice = el.dataset.value === "menu";
-      render();
-      return;
-    }
-
-    case "bottle-type-next":
       goTo("bottle-payers");
       return;
+    }
 
     case "pick-person": {
       const id = el.dataset.id;

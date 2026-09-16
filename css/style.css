@@ -180,13 +180,9 @@ button {
   margin-top: 2px;
 }
 
-.btn-choice.selected-choice {
-  border: 2px solid var(--accent);
-  background: rgba(202, 161, 75, 0.12);
-}
-
 .bottle-calc-preview {
   background: var(--panel);
+  border: 2px solid var(--accent);
   border-radius: var(--radius);
   padding: 16px;
   display: flex;
@@ -394,28 +390,6 @@ input.amount-display::placeholder {
   font-size: 14px;
   font-weight: 700;
   padding: 6px;
-}
-
-.bottle-total-banner {
-  background: var(--panel);
-  border: 2px solid var(--accent);
-  border-radius: var(--radius);
-  padding: 14px 16px;
-  text-align: center;
-}
-.bottle-total-banner .label {
-  font-size: 13px;
-  color: var(--text-dim);
-}
-.bottle-total-banner .value {
-  font-size: 32px;
-  font-weight: 800;
-  color: var(--accent);
-  margin: 4px 0;
-}
-.bottle-total-banner .calc-line {
-  font-size: 13px;
-  color: var(--text-dim);
 }
 
 details.settings {
