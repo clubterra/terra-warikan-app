@@ -35,21 +35,31 @@ function defaultAnswers() {
     fixed: [], // {personId, amount}
     fixedDraft: null,
     bottleParticipation: {}, // personId -> 'join' | 'onlyBottle'
+    topupParticipation: {}, // personId -> 'join' | 'onlyTopup'
     sameSplit: { payerId: null, otherAmount: null },
     extraRecipients: null,
   };
 }
 
-let state = {
-  answers: defaultAnswers(),
-  screen: "start",
-  stack: [],
-  error: null,
-  amountTarget: null,
-  participationIndex: 0,
-  showBreakdown: false,
-  selectedForSwap: null,
-};
+function freshUiState() {
+  return {
+    answers: defaultAnswers(),
+    screen: "start",
+    stack: [],
+    error: null,
+    amountTarget: null,
+    participationQueue: [],
+    topupParticipationQueue: [],
+    flowMode: null, // 'method1' (①) | 'method2' (②) — 共有画面が「次へ」の行き先を判断するために使う
+    editingBottleId: null,
+    editingFixedPersonId: null,
+    editingTopupPersonId: null,
+    showBreakdown: false,
+    selectedForSwap: null,
+  };
+}
+
+let state = freshUiState();
 
 let bottleUidCounter = 1;
 function nextBottleId() {
@@ -70,6 +80,14 @@ function goTo(screen) {
   scrollToTop();
 }
 
+function goToWithError(screen, message) {
+  state.stack.push(state.screen);
+  state.screen = screen;
+  state.error = message;
+  render();
+  scrollToTop();
+}
+
 function goBack() {
   if (state.stack.length === 0) return;
   state.screen = state.stack.pop();
@@ -80,16 +98,7 @@ function goBack() {
 
 function resetAll() {
   bottleUidCounter = 1;
-  state = {
-    answers: defaultAnswers(),
-    screen: "start",
-    stack: [],
-    error: null,
-    amountTarget: null,
-    participationIndex: 0,
-    showBreakdown: false,
-    selectedForSwap: null,
-  };
+  state = freshUiState();
   render();
   scrollToTop();
 }
@@ -196,6 +205,9 @@ function regeneratePeople(newCount) {
     .map((b) => ({ ...b, payerIds: b.payerIds.filter((id) => validIds.has(id)) }))
     .filter((b) => b.payerIds.length > 0);
   cleanupParticipationMap();
+  for (const pid of Object.keys(a.topupParticipation)) {
+    if (!validIds.has(pid)) delete a.topupParticipation[pid];
+  }
   if (a.sameSplit.payerId && !validIds.has(a.sameSplit.payerId)) {
     a.sameSplit.payerId = null;
   }
@@ -223,6 +235,7 @@ function runCompute() {
     bottles: a.bottles,
     topups: a.topups,
     bottleParticipation: a.bottleParticipation,
+    topupParticipation: a.topupParticipation,
     extraRecipients: a.extraRecipients,
   });
 }
@@ -453,10 +466,21 @@ function renderBottlePayers() {
   const rows = people
     .map((p) => personCheckRow(p, { type: "checkbox", checked: d.payerIds.includes(p.id) }))
     .join("");
+  const exact = convertBottleAmount(d.amount, d.isMenuPrice, d.multiplier);
+  const calcLine = d.isMenuPrice
+    ? `${fmt(d.amount)}円 × ${esc(d.multiplier)}倍 = ${fmt(exact)}円`
+    : `税・サービス料込み ${fmt(exact)}円`;
   return layout({
     title: "誰が払う？",
     subtitle: "このボトルの代金を払う人を選んでください。複数人選べます。",
-    body: `<div class="card-list">${rows}</div>`,
+    body: `
+      <div class="bottle-total-banner">
+        <div class="label">ボトル分</div>
+        <div class="value">${fmt(exact)}円</div>
+        <div class="calc-line">${calcLine}</div>
+      </div>
+      <div class="card-list">${rows}</div>
+    `,
     footer: `<button class="btn btn-primary" data-action="bottle-payers-next" type="button">次へ</button>`,
   });
 }
@@ -490,23 +514,44 @@ function renderBottleAddMore() {
 }
 
 function renderBottleParticipation() {
-  const ids = uniqueBottlePayerIds();
-  const pid = ids[state.participationIndex];
+  const pid = state.participationQueue[0];
   if (!pid) {
-    // 念のため：担当者がいなければ次に進む
+    // 念のため：対象者がいなければ次に進む
+    if (state.flowMode === "method2") {
+      state.screen = "method2-add-more";
+      return renderMethod2AddMore();
+    }
     state.screen = "core-topup-ask";
     return renderCoreTopupAsk();
   }
   return layout({
-    title: `${esc(personName(pid))}は、残りを割り勘する？`,
+    title: `${esc(personName(pid))}さんも、残りの割り勘に入る？`,
     subtitle: "ボトル代のほかに、残りの会計も一緒に割り勘するか選んでください。",
     body: `
-      <button class="btn btn-choice" data-action="participation-choice" data-value="join" type="button">
-        一緒に割り勘する
-      </button>
-      <button class="btn btn-choice" data-action="participation-choice" data-value="onlyBottle" type="button">
-        ボトル代だけ払う
-      </button>
+      <button class="btn btn-choice" data-action="participation-choice" data-value="join" type="button">入る</button>
+      <button class="btn btn-choice" data-action="participation-choice" data-value="onlyBottle" type="button">入らない</button>
+    `,
+    footer: "",
+  });
+}
+
+function renderTopupParticipation() {
+  const pid = state.topupParticipationQueue[0];
+  if (!pid) {
+    // 念のため：対象者がいなければ次に進む
+    if (state.flowMode === "method2") {
+      state.screen = "method2-add-more";
+      return renderMethod2AddMore();
+    }
+    state.screen = "results";
+    return renderResults();
+  }
+  return layout({
+    title: `${esc(personName(pid))}さんも、残りの割り勘に入る？`,
+    subtitle: "上乗せ額のほかに、残りの会計も一緒に割り勘するか選んでください。",
+    body: `
+      <button class="btn btn-choice" data-action="topup-participation-choice" data-value="join" type="button">入る</button>
+      <button class="btn btn-choice" data-action="topup-participation-choice" data-value="onlyTopup" type="button">入らない</button>
     `,
     footer: "",
   });
@@ -587,6 +632,26 @@ function renderFixedPerson() {
   });
 }
 
+function renderFixedAmountMethod() {
+  const name = personName(state.answers.fixedDraft.personId);
+  return layout({
+    title: "金額の決め方は？",
+    subtitle: `${esc(name)}さんの支払い方法を選んでください。`,
+    body: `
+      <button class="btn btn-choice" data-action="fixed-method-choice" data-value="direct" type="button">
+        ① 最終支払額を直接入力<span class="desc">払う金額をそのまま入力します</span>
+      </button>
+      <button class="btn btn-choice" data-action="fixed-method-choice" data-value="bottle" type="button">
+        ② ボトル代から計算<span class="desc">ボトルの金額から自動で計算します</span>
+      </button>
+      <button class="btn btn-choice" data-action="fixed-method-choice" data-value="topup" type="button">
+        ③ その他の上乗せ額から計算<span class="desc">割り勘分にいくら上乗せするか決めます</span>
+      </button>
+    `,
+    footer: "",
+  });
+}
+
 function renderFixedAmount() {
   state.amountTarget = "fixedDraftAmount";
   const name = personName(state.answers.fixedDraft.personId);
@@ -598,22 +663,79 @@ function renderFixedAmount() {
   });
 }
 
-function renderFixedAddMore() {
-  const list = state.answers.fixed
-    .map(
-      (f) => `
-      <div class="item-card">
-        <div class="info"><b>${esc(personName(f.personId))}</b>：合計 ${fmt(f.amount)}円</div>
+function bottleParticipationLabel(pid) {
+  const choice = state.answers.bottleParticipation[pid];
+  if (choice === "onlyBottle") return "ボトル代のみ";
+  return "残りも割り勘";
+}
+
+function topupParticipationLabel(pid) {
+  const choice = state.answers.topupParticipation[pid];
+  if (choice === "onlyTopup") return "上乗せ額のみ";
+  return "残りも割り勘";
+}
+
+function method2FixedCard(f) {
+  return `
+    <div class="item-card">
+      <div class="info"><b>${esc(personName(f.personId))}</b>：合計 ${fmt(f.amount)}円（直接入力）</div>
+      <div class="card-actions">
+        <button class="edit" data-action="fixed-edit" data-id="${esc(f.personId)}" type="button">編集</button>
         <button class="del" data-action="fixed-delete" data-id="${esc(f.personId)}" type="button">削除</button>
-      </div>`
-    )
-    .join("");
+      </div>
+    </div>
+  `;
+}
+
+function method2BottleCard(b) {
+  const exact = convertBottleAmount(b.amount, b.isMenuPrice, b.multiplier);
+  const typeText = b.isMenuPrice ? `メニュー価格 × ${b.multiplier}倍` : "税・サービス料込み";
+  const payerLines = b.payerIds
+    .map((pid) => `${esc(personName(pid))}（${esc(bottleParticipationLabel(pid))}）`)
+    .join("、");
+  return `
+    <div class="item-card">
+      <div class="info">
+        <b>ボトル分 ${fmt(exact)}円</b>（${esc(typeText)}）<br/>
+        負担する人：${payerLines}
+      </div>
+      <div class="card-actions">
+        <button class="edit" data-action="bottle-edit" data-id="${esc(b.id)}" type="button">編集</button>
+        <button class="del" data-action="bottle-delete" data-id="${esc(b.id)}" type="button">削除</button>
+      </div>
+    </div>
+  `;
+}
+
+function method2TopupCard(t) {
+  return `
+    <div class="item-card">
+      <div class="info">
+        <b>${esc(personName(t.personId))}</b>：上乗せ ${fmt(t.amount)}円<br/>
+        ${esc(topupParticipationLabel(t.personId))}
+      </div>
+      <div class="card-actions">
+        <button class="edit" data-action="topup-edit" data-id="${esc(t.personId)}" type="button">編集</button>
+        <button class="del" data-action="topup-delete" data-id="${esc(t.personId)}" type="button">削除</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderMethod2AddMore() {
+  const a = state.answers;
+  const list = [
+    ...a.fixed.map(method2FixedCard),
+    ...a.bottles.map(method2BottleCard),
+    ...a.topups.map(method2TopupCard),
+  ].join("");
   return layout({
-    title: "もう1人、追加しますか？",
+    title: "設定済みの支払い",
+    subtitle: "ほかにも金額を決めたい人がいれば追加できます。それ以外の人は、残りの金額を均等に割り勘します。",
     body: `
-      ${list ? `<div class="card-list">${list}</div>` : ""}
-      <button class="btn btn-choice" data-action="fixed-add-more-choice" data-value="yes" type="button">もう1人追加する</button>
-      <button class="btn btn-choice" data-action="fixed-add-more-choice" data-value="no" type="button">次へ</button>
+      ${list ? `<div class="card-list">${list}</div>` : `<div class="hint">まだ設定がありません。</div>`}
+      <button class="btn btn-choice" data-action="method2-add-more-choice" data-value="yes" type="button">もう1人、設定する</button>
+      <button class="btn btn-choice" data-action="method2-add-more-choice" data-value="no" type="button">次へ</button>
     `,
     footer: "",
   });
@@ -745,9 +867,11 @@ const screens = {
   "topup-person": renderTopupPerson,
   "topup-amount": renderTopupAmount,
   "topup-add-more": renderTopupAddMore,
+  "topup-participation": renderTopupParticipation,
   "fixed-person": renderFixedPerson,
+  "fixed-amount-method": renderFixedAmountMethod,
   "fixed-amount": renderFixedAmount,
-  "fixed-add-more": renderFixedAddMore,
+  "method2-add-more": renderMethod2AddMore,
   "same-payer": renderSamePayer,
   "same-amount": renderSameAmount,
   results: renderResults,
@@ -781,9 +905,9 @@ function afterBottleLoopFinished() {
     render();
     return;
   }
-  const payers = uniqueBottlePayerIds();
-  if (payers.length > 0) {
-    state.participationIndex = 0;
+  const queue = uniqueBottlePayerIds().filter((id) => !(id in state.answers.bottleParticipation));
+  if (queue.length > 0) {
+    state.participationQueue = queue;
     goTo("bottle-participation");
   } else {
     goTo("core-topup-ask");
@@ -854,13 +978,22 @@ function handleAction(action, el) {
       a.fixed = [];
       a.fixedDraft = null;
       a.bottleParticipation = {};
+      a.topupParticipation = {};
       a.sameSplit = { payerId: null, otherAmount: null };
+      state.participationQueue = [];
+      state.topupParticipationQueue = [];
+      state.editingBottleId = null;
+      state.editingFixedPersonId = null;
+      state.editingTopupPersonId = null;
       if (v === "even") {
+        state.flowMode = "method1";
         goTo("core-bottle-ask");
       } else if (v === "fixed") {
+        state.flowMode = "method2";
         a.fixedDraft = { personId: null, amount: null };
         goTo("fixed-person");
       } else if (v === "same") {
+        state.flowMode = null;
         goTo("same-payer");
       }
       return;
@@ -923,6 +1056,38 @@ function handleAction(action, el) {
         render();
         return;
       }
+
+      if (state.flowMode === "method2") {
+        let bottle;
+        if (state.editingBottleId) {
+          bottle = { id: state.editingBottleId, ...a.bottleDraft };
+          const idx = a.bottles.findIndex((b) => b.id === state.editingBottleId);
+          if (idx !== -1) a.bottles[idx] = bottle;
+          else a.bottles.push(bottle);
+          state.editingBottleId = null;
+        } else {
+          bottle = { id: nextBottleId(), ...a.bottleDraft };
+          a.bottles.push(bottle);
+        }
+        a.bottleDraft = null;
+        cleanupParticipationMap();
+        if (bottleExactTotalSum(a.bottles) > a.total) {
+          goToWithError(
+            "method2-add-more",
+            "ボトル代の換算合計（切り捨て前）が会計総額を超えています。ボトルの金額を確認してください。"
+          );
+          return;
+        }
+        const queue = bottle.payerIds.filter((id) => !(id in a.bottleParticipation));
+        if (queue.length > 0) {
+          state.participationQueue = queue;
+          goTo("bottle-participation");
+        } else {
+          goTo("method2-add-more");
+        }
+        return;
+      }
+
       const bottle = { id: nextBottleId(), ...a.bottleDraft };
       a.bottles.push(bottle);
       a.bottleDraft = null;
@@ -950,17 +1115,31 @@ function handleAction(action, el) {
     }
 
     case "participation-choice": {
-      const ids = uniqueBottlePayerIds();
-      const pid = ids[state.participationIndex];
+      const pid = state.participationQueue.shift();
       a.bottleParticipation[pid] = el.dataset.value;
       if (el.dataset.value === "onlyBottle") {
         a.topups = a.topups.filter((t) => t.personId !== pid);
+        delete a.topupParticipation[pid];
       }
-      state.participationIndex += 1;
-      if (state.participationIndex >= ids.length) {
-        goToAfterBottleParticipation();
-      } else {
+      if (state.participationQueue.length > 0) {
         render();
+      } else if (state.flowMode === "method2") {
+        goTo("method2-add-more");
+      } else {
+        goToAfterBottleParticipation();
+      }
+      return;
+    }
+
+    case "topup-participation-choice": {
+      const pid = state.topupParticipationQueue.shift();
+      a.topupParticipation[pid] = el.dataset.value;
+      if (state.topupParticipationQueue.length > 0) {
+        render();
+      } else if (state.flowMode === "method2") {
+        goTo("method2-add-more");
+      } else {
+        proceedToResults();
       }
       return;
     }
@@ -993,7 +1172,24 @@ function handleAction(action, el) {
         render();
         return;
       }
-      a.topups.push({ personId: a.topupDraft.personId, amount: amt });
+      const personId = a.topupDraft.personId;
+
+      if (state.flowMode === "method2") {
+        if (state.editingTopupPersonId) {
+          const idx = a.topups.findIndex((t) => t.personId === state.editingTopupPersonId);
+          if (idx !== -1) a.topups[idx] = { personId, amount: amt };
+          else a.topups.push({ personId, amount: amt });
+          state.editingTopupPersonId = null;
+        } else {
+          a.topups.push({ personId, amount: amt });
+        }
+        a.topupDraft = null;
+        state.topupParticipationQueue = [personId];
+        goTo("topup-participation");
+        return;
+      }
+
+      a.topups.push({ personId, amount: amt });
       a.topupDraft = null;
       goTo("topup-add-more");
       return;
@@ -1002,6 +1198,7 @@ function handleAction(action, el) {
     case "topup-delete": {
       const id = el.dataset.id;
       a.topups = a.topups.filter((t) => t.personId !== id);
+      delete a.topupParticipation[id];
       render();
       return;
     }
@@ -1011,6 +1208,14 @@ function handleAction(action, el) {
       if (v === "yes") {
         a.topupDraft = { personId: null, amount: null };
         goTo("topup-person");
+        return;
+      }
+      const queue = [...new Set(a.topups.map((t) => t.personId))].filter(
+        (id) => !(id in a.topupParticipation)
+      );
+      if (queue.length > 0) {
+        state.topupParticipationQueue = queue;
+        goTo("topup-participation");
       } else {
         proceedToResults();
       }
@@ -1023,7 +1228,25 @@ function handleAction(action, el) {
         render();
         return;
       }
-      goTo("fixed-amount");
+      goTo("fixed-amount-method");
+      return;
+    }
+
+    case "fixed-method-choice": {
+      const v = el.dataset.value;
+      const personId = a.fixedDraft.personId;
+      state.editingFixedPersonId = null;
+      state.editingBottleId = null;
+      state.editingTopupPersonId = null;
+      if (v === "direct") {
+        goTo("fixed-amount");
+      } else if (v === "bottle") {
+        a.bottleDraft = { amount: null, isMenuPrice: true, multiplier: 1.3, payerIds: [personId] };
+        goTo("bottle-amount");
+      } else if (v === "topup") {
+        a.topupDraft = { personId, amount: null };
+        goTo("topup-amount");
+      }
       return;
     }
 
@@ -1034,9 +1257,17 @@ function handleAction(action, el) {
         render();
         return;
       }
-      a.fixed.push({ personId: a.fixedDraft.personId, amount: amt });
+      const personId = a.fixedDraft.personId;
+      if (state.editingFixedPersonId) {
+        const idx = a.fixed.findIndex((f) => f.personId === state.editingFixedPersonId);
+        if (idx !== -1) a.fixed[idx] = { personId, amount: amt };
+        else a.fixed.push({ personId, amount: amt });
+        state.editingFixedPersonId = null;
+      } else {
+        a.fixed.push({ personId, amount: amt });
+      }
       a.fixedDraft = null;
-      goTo("fixed-add-more");
+      goTo("method2-add-more");
       return;
     }
 
@@ -1047,7 +1278,42 @@ function handleAction(action, el) {
       return;
     }
 
-    case "fixed-add-more-choice": {
+    case "fixed-edit": {
+      const id = el.dataset.id;
+      const f = a.fixed.find((x) => x.personId === id);
+      if (!f) return;
+      a.fixedDraft = { personId: f.personId, amount: f.amount };
+      state.editingFixedPersonId = id;
+      goTo("fixed-amount");
+      return;
+    }
+
+    case "bottle-edit": {
+      const id = el.dataset.id;
+      const b = a.bottles.find((x) => x.id === id);
+      if (!b) return;
+      a.bottleDraft = {
+        amount: b.amount,
+        isMenuPrice: b.isMenuPrice,
+        multiplier: b.multiplier,
+        payerIds: [...b.payerIds],
+      };
+      state.editingBottleId = id;
+      goTo("bottle-amount");
+      return;
+    }
+
+    case "topup-edit": {
+      const id = el.dataset.id;
+      const t = a.topups.find((x) => x.personId === id);
+      if (!t) return;
+      a.topupDraft = { personId: t.personId, amount: t.amount };
+      state.editingTopupPersonId = id;
+      goTo("topup-amount");
+      return;
+    }
+
+    case "method2-add-more-choice": {
       const v = el.dataset.value;
       if (v === "yes") {
         a.fixedDraft = { personId: null, amount: null };
@@ -1060,12 +1326,7 @@ function handleAction(action, el) {
         render();
         return;
       }
-      const remaining = eligibleForFixed();
-      if (remaining.length === 0) {
-        proceedToResults();
-      } else {
-        goTo("core-bottle-ask");
-      }
+      proceedToResults();
       return;
     }
 

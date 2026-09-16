@@ -27,6 +27,28 @@ html, body {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* iPhone Safariでは、フォームの文字色がOS側の設定で黒くなることがあるため、
+   入力・選択系要素で明示的に文字色を指定する（-webkit-text-fill-colorも必須）。
+   ※ button は個別クラスで色を変える箇所が多いため、ここには含めない。 */
+input,
+select,
+textarea {
+  color: var(--text);
+  -webkit-text-fill-color: var(--text);
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-dim);
+  -webkit-text-fill-color: var(--text-dim);
+  opacity: 1;
+}
+/* 16px未満だとiPhone Safariが入力時に自動ズームするため、下限を敷く。 */
+input,
+select,
+textarea {
+  font-size: 16px;
+}
+
 #app {
   min-height: 100dvh;
   display: flex;
@@ -198,6 +220,9 @@ input.amount-display {
   appearance: none;
   outline: none;
   font-family: inherit;
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
 }
 input.amount-display::placeholder {
   color: var(--text-dim);
@@ -313,6 +338,43 @@ input.amount-display::placeholder {
   font-weight: 700;
   padding: 6px;
   flex-shrink: 0;
+}
+.card-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.item-card .edit {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 700;
+  padding: 6px;
+}
+
+.bottle-total-banner {
+  background: var(--panel);
+  border: 2px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  text-align: center;
+}
+.bottle-total-banner .label {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.bottle-total-banner .value {
+  font-size: 32px;
+  font-weight: 800;
+  color: var(--accent);
+  margin: 4px 0;
+}
+.bottle-total-banner .calc-line {
+  font-size: 13px;
+  color: var(--text-dim);
 }
 
 .toggle-row {
